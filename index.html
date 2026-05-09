@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>YouTube (обход блокировок)</title>
+    <title>YouTube – обход блокировок</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial, sans-serif; background: #f9f9f9; font-size: 14px; }
@@ -77,61 +77,17 @@
 <div id="toastMsg" class="toast-msg"></div>
 
 <script>
-    // ========== ВАШ API КЛЮЧ (уже вставлен) ==========
-    const YOUTUBE_API_KEY = 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q';
-    // ========== СПИСОК РАБОЧИХ INVIOUS INSTANCES ==========
-    const INV_INSTANCES = [
-        'https://yewtu.be',
-        'https://invidious.snopyta.org',
-        'https://vid.puffyan.us',
-        'https://inv.riverside.rocks',
-        'https://invidious.namazso.eu',
-        'https://invidious.tiekoetter.com'
-    ];
-    let currentInvInstance = INV_INSTANCES[0];
-    let invInstanceIndex = 0;
-
-    async function testInvInstance(instance) {
-        try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 3000);
-            const res = await fetch(`${instance}/api/v1/search?q=test`, { signal: controller.signal });
-            clearTimeout(timeout);
-            return res.ok;
-        } catch { return false; }
-    }
-
-    async function selectWorkingInvInstance() {
-        for (let i = 0; i < INV_INSTANCES.length; i++) {
-            const inst = INV_INSTANCES[i];
-            if (await testInvInstance(inst)) {
-                currentInvInstance = inst;
-                invInstanceIndex = i;
-                console.log(`Using Invidious instance: ${currentInvInstance}`);
-                return true;
-            }
-        }
-        showToast('⚠️ Не удалось найти рабочий прокси-сервер для видео', true);
-        return false;
-    }
-
-    // ========== ПОЛИФИЛЛЫ ==========
-    if (!window.localStorage) {
-        window.localStorage = { getItem: function(k) { return this[k]; }, setItem: function(k,v) { this[k]=v; } };
-    }
-    if (!Array.prototype.find) {
-        Array.prototype.find = function(pred) { for(var i=0;i<this.length;i++) if(pred(this[i])) return this[i]; };
-    }
-    if (!('classList' in document.createElement('div'))) {
-        (function() { var proto = window.Element.prototype; proto.classList = { add: function(c) { this.className += ' ' + c; }, remove: function(c) { this.className = this.className.replace(new RegExp('\\b'+c+'\\b','g'),'').replace(/\s+/g,' ').trim(); }, contains: function(c) { return (' '+this.className+' ').indexOf(' '+c+' ') !== -1; } }; })();
-    }
-
-    // ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
+    // ========== КОНФИГУРАЦИЯ ==========
+    const YOUTUBE_API_KEY = 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q'; // рабочий ключ
+    // CORS-прокси, чтобы обойти блокировку API YouTube
+    const CORS_PROXY = 'https://cors-anywhere.herokuapp.com/';
+    // Если CORS-прокси заблокирован, используем резервный
+    const CORS_BACKUP = 'https://api.allorigins.win/raw?url=';
+    
     let currentList = [];
     let subscriptions = JSON.parse(localStorage.getItem('subs') || '{}');
     let likes = JSON.parse(localStorage.getItem('likes') || '{}');
     let comments = JSON.parse(localStorage.getItem('comments') || '{}');
-    let currentVideo = null;
     let nextPageToken = null;
     let isLoading = false;
 
@@ -157,18 +113,24 @@
     function saveLikes() { localStorage.setItem('likes', JSON.stringify(likes)); }
     function saveComments() { localStorage.setItem('comments', JSON.stringify(comments)); }
 
-    // ========== ЗАПРОСЫ К YOUTUBE API ==========
-    async function youtubeFetch(endpoint, params) {
+    // ========== ЗАПРОСЫ К YOUTUBE API ЧЕРЕЗ CORS-ПРОКСИ ==========
+    async function youtubeApiFetch(endpoint, params) {
         const url = new URL(`https://www.googleapis.com/youtube/v3/${endpoint}`);
         url.searchParams.append('key', YOUTUBE_API_KEY);
         for (let k in params) if (params[k]) url.searchParams.append(k, params[k]);
+        // Пытаемся через основной прокси
         try {
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const res = await fetch(CORS_PROXY + url.toString(), {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            if (!res.ok) throw new Error('CORS proxy error');
             return await res.json();
-        } catch (err) {
-            showToast('Ошибка API YouTube: ' + err.message, true);
-            return null;
+        } catch (e) {
+            // Резервный прокси
+            const res2 = await fetch(CORS_BACKUP + encodeURIComponent(url.toString()));
+            if (!res2.ok) throw new Error('Backup proxy error');
+            const text = await res2.text();
+            return JSON.parse(text);
         }
     }
 
@@ -177,13 +139,13 @@
         if (query) params.q = query;
         else params.chart = 'mostPopular';
         if (pageToken) params.pageToken = pageToken;
-        const data = await youtubeFetch('search', params);
-        if (!data) return { items: [], nextPageToken: null };
+        const data = await youtubeApiFetch('search', params);
+        if (!data || !data.items) return { items: [], nextPageToken: null };
         const videoIds = data.items.map(i => i.id.videoId).join(',');
         let statsMap = {};
         if (videoIds) {
-            const stats = await youtubeFetch('videos', { part: 'statistics', id: videoIds });
-            if (stats) stats.items.forEach(i => statsMap[i.id] = i.statistics);
+            const stats = await youtubeApiFetch('videos', { part: 'statistics', id: videoIds });
+            if (stats && stats.items) stats.items.forEach(i => statsMap[i.id] = i.statistics);
         }
         const items = data.items.map(i => ({
             id: i.id.videoId,
@@ -195,6 +157,19 @@
             thumb: i.snippet.thumbnails.medium.url
         }));
         return { items, nextPageToken: data.nextPageToken };
+    }
+
+    async function getRelatedVideos(videoId) {
+        // Получаем похожие видео через API
+        const data = await youtubeApiFetch('search', { part: 'snippet', relatedToVideoId: videoId, type: 'video', maxResults: 10 });
+        if (!data || !data.items) return [];
+        return data.items.map(i => ({
+            id: i.id.videoId,
+            title: i.snippet.title,
+            channelTitle: i.snippet.channelTitle,
+            thumb: i.snippet.thumbnails.medium.url,
+            views: '0'
+        }));
     }
 
     async function loadMore() {
@@ -229,7 +204,6 @@
         attachCardEvents();
     }
 
-    // ========== ОТРИСОВКА ГЛАВНОЙ ==========
     async function renderHome(reset = true) {
         if (reset) {
             currentList = [];
@@ -268,9 +242,8 @@
         });
     }
 
-    // ========== ПРОСМОТР ВИДЕО (через рабочий Invidious) ==========
+    // ========== ПРОСМОТР ВИДЕО (через обычный iframe) ==========
     function openWatch(video) {
-        currentVideo = video;
         homeDiv.style.display = 'none';
         watchDiv.style.display = 'block';
         channelDiv.style.display = 'none';
@@ -278,12 +251,12 @@
         if(window.history) history.pushState({ view: 'watch', id: video.id }, '', '?v='+video.id);
     }
 
-    function renderWatch(video) {
-        let suggestions = currentList.filter(v => v.id !== video.id).slice(0,4);
+    async function renderWatch(video) {
+        let suggestions = await getRelatedVideos(video.id);
         let isSub = !!subscriptions[video.channelId];
         let likeStatus = likes[video.id];
         let likeCount = formatViews(parseInt(video.views)/100 + 500);
-        let embedUrl = `${currentInvInstance}/embed/${video.id}`;
+        let embedUrl = `https://www.youtube.com/embed/${video.id}?autoplay=0&rel=0`;
         let html = `<div class="watch-main">
             <div class="video-player"><iframe src="${embedUrl}" allowfullscreen></iframe></div>
             <div class="watch-title">${escapeHtml(video.title)}</div>
@@ -316,14 +289,12 @@
                 <div class="suggestion-info">
                     <div class="suggestion-title">${escapeHtml(sug.title)}</div>
                     <div>${escapeHtml(sug.channelTitle)}</div>
-                    <div>${formatViews(sug.views)} просмотров</div>
                 </div>
             </div>`;
         }
         html += `</div></div>`;
         watchDiv.innerHTML = html;
 
-        // Подписка
         document.getElementById('subBtn').onclick = () => {
             if(subscriptions[video.channelId]) {
                 delete subscriptions[video.channelId];
@@ -385,7 +356,7 @@
         document.querySelectorAll('.suggestion-item').forEach(el => {
             el.onclick = () => {
                 let sugId = el.dataset.sugId;
-                let sugVideo = currentList.find(v => v.id === sugId);
+                let sugVideo = suggestions.find(v => v.id === sugId);
                 if(sugVideo) openWatch(sugVideo);
             };
         });
@@ -394,72 +365,12 @@
         });
     }
 
-    // ========== КАНАЛ (через Invidious) ==========
     async function openChannel(channelId) {
-        if (!currentInvInstance) await selectWorkingInvInstance();
         showToast('Загрузка канала...');
-        const url = `${currentInvInstance}/api/v1/channels/${channelId}`;
-        try {
-            const res = await fetch(url);
-            if (!res.ok) throw new Error();
-            const data = await res.json();
-            const channelInfo = {
-                title: data.author,
-                subscriberCount: data.subCount || '0',
-                thumb: data.authorThumbnails?.[0]?.url || ''
-            };
-            const videos = (data.videos || []).slice(0,20).map(v => ({
-                id: v.videoId,
-                title: v.title,
-                channelId: channelId,
-                channelTitle: data.author,
-                views: v.viewCount || '0',
-                thumb: v.videoThumbnails?.[0]?.url || `https://img.youtube.com/vi/${v.videoId}/mqdefault.jpg`
-            }));
-            let isSub = !!subscriptions[channelId];
-            let html = `<div class="channel-header">
-                <div class="channel-banner"><img src="${channelInfo.thumb}"></div>
-                <div><h2>${escapeHtml(channelInfo.title)}</h2><div>${formatViews(channelInfo.subscriberCount)} подписчиков</div>
-                <button class="subscribe-btn ${isSub ? 'subscribed' : ''}" id="channelSubBtn">${isSub ? 'Подписан' : 'Подписаться'}</button></div>
-            </div><div class="video-grid" id="channelVideosGrid"></div>`;
-            channelDiv.innerHTML = html;
-            let gridHtml = '';
-            for(let v of videos) {
-                gridHtml += `<div class="video-card" data-id="${v.id}">
-                    <div class="thumbnail"><img src="${v.thumb}"></div>
-                    <div class="video-details">
-                        <div class="channel-avatar"><img src="https://via.placeholder.com/36"></div>
-                        <div class="video-info">
-                            <div class="video-title">${escapeHtml(v.title)}</div>
-                            <div class="channel-name">${escapeHtml(v.channelTitle)}</div>
-                            <div class="video-meta">${formatViews(v.views)} просмотров</div>
-                        </div>
-                    </div>
-                </div>`;
-            }
-            document.getElementById('channelVideosGrid').innerHTML = gridHtml;
-            document.querySelectorAll('#channelVideosGrid .video-card').forEach(card => {
-                card.onclick = () => { let id = card.dataset.id; let video = videos.find(v => v.id === id); if(video) openWatch(video); };
-            });
-            document.getElementById('channelSubBtn').onclick = () => {
-                if(subscriptions[channelId]) {
-                    delete subscriptions[channelId];
-                    document.getElementById('channelSubBtn').className = 'subscribe-btn';
-                    document.getElementById('channelSubBtn').innerHTML = 'Подписаться';
-                } else {
-                    subscriptions[channelId] = true;
-                    document.getElementById('channelSubBtn').className = 'subscribe-btn subscribed';
-                    document.getElementById('channelSubBtn').innerHTML = 'Подписан';
-                }
-                saveSubs();
-            };
-            homeDiv.style.display = 'none';
-            watchDiv.style.display = 'none';
-            channelDiv.style.display = 'block';
-        } catch(e) {
-            showToast('Не удалось загрузить канал', true);
-            goHome();
-        }
+        // Упрощённо: просто показываем поиск по каналу
+        searchInput.value = channelId;
+        await performSearch();
+        goHome();
     }
 
     function renderSubsList() {
@@ -490,17 +401,16 @@
 
     async function performSearch() {
         let q = searchInput.value.trim();
-        if(q === '') return;
-        renderHome(true);
+        if(q === '') q = '';
+        await renderHome(true);
     }
 
     // ========== ИНИЦИАЛИЗАЦИЯ ==========
     (async () => {
-        await selectWorkingInvInstance();
         if (!YOUTUBE_API_KEY || YOUTUBE_API_KEY === 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q') {
             showToast('⚠️ Используется тестовый API ключ. Возможно, его квота исчерпана.', true);
         }
-        renderHome();
+        await renderHome();
         renderSubsList();
         searchBtn.onclick = performSearch;
         searchInput.onkeypress = e => { if(e.keyCode === 13) performSearch(); };
