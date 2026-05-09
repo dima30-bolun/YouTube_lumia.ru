@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Video Portal</title>
+    <title>YouTube</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial, sans-serif; background: #f9f9f9; font-size: 14px; }
@@ -11,7 +11,7 @@
         .header-left { float: left; }
         .header-center { float: left; width: 50%; margin: 0 2%; }
         .header-right { float: right; }
-        .logo-icon { font-size: 20px; font-weight: bold; cursor: pointer; display: inline-block; }
+        .logo-icon { font-size: 20px; font-weight: bold; cursor: pointer; display: inline-block; color: #ff0000; }
         .search-form input { width: 75%; padding: 6px; border: 1px solid #ccc; border-right: none; }
         .search-form button { width: 20%; padding: 6px; background: #f0f0f0; border: 1px solid #ccc; border-left: none; cursor: pointer; }
         .avatar { width: 32px; height: 32px; background: #6b6b6b; border-radius: 50%; text-align: center; line-height: 32px; color: white; display: inline-block; cursor: pointer; margin-left: 10px; }
@@ -58,9 +58,9 @@
 </head>
 <body>
 <div class="header">
-    <div class="header-left"><span class="logo-icon" id="logoBtn">VideoPortal</span></div>
-    <div class="header-center"><div class="search-form"><input type="text" id="searchInput" placeholder="Поиск видео"><button id="searchBtn">🔍</button></div></div>
-    <div class="header-right"><div class="avatar" id="avatarMock">П</div></div>
+    <div class="header-left"><span class="logo-icon" id="logoBtn">YouTube</span></div>
+    <div class="header-center"><div class="search-form"><input type="text" id="searchInput" placeholder="Поиск"><button id="searchBtn">🔍</button></div></div>
+    <div class="header-right"><div class="avatar" id="avatarMock">Ю</div></div>
 </div>
 <div class="app-container">
     <div class="sidebar">
@@ -77,10 +77,12 @@
 <div id="toastMsg" class="toast-msg"></div>
 
 <script>
-    // ========== Invidious API (публичный инстанс) ==========
-    // Используется инстанс без рекламы и без упоминаний YouTube
-    const INV_INSTANCE = 'https://inv.riverside.rocks';
-    // Резервный: 'https://yewtu.be', 'https://invidious.snopyta.org'
+    // ========== НАСТРОЙКИ ==========
+    // ВСТАВЬТЕ СВОЙ API КЛЮЧ YouTube (получить в Google Cloud Console)
+    const YOUTUBE_API_KEY = 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q'; // ЗАМЕНИТЕ НА СВОЙ
+    // Invidious инстанс (проксирует видео, обходит блокировки)
+    const INV_INSTANCE = 'https://inv.riverside.rocks'; // можно сменить на yewtu.be и др.
+    // =====================================================
 
     // ========== ПОЛИФИЛЛЫ ==========
     if (!window.localStorage) {
@@ -99,6 +101,8 @@
     let likes = JSON.parse(localStorage.getItem('likes') || '{}');
     let comments = JSON.parse(localStorage.getItem('comments') || '{}');
     let currentVideo = null;
+    let nextPageToken = null;
+    let isLoading = false;
 
     // DOM
     const homeDiv = document.getElementById('homeContainer');
@@ -123,69 +127,62 @@
     function saveLikes() { localStorage.setItem('likes', JSON.stringify(likes)); }
     function saveComments() { localStorage.setItem('comments', JSON.stringify(comments)); }
 
-    // ========== ЗАПРОСЫ К INVIDIOUS ==========
-    async function invidiousFetch(path) {
-        const url = INV_INSTANCE + path;
+    // ========== ЗАПРОСЫ К YOUTUBE API ==========
+    async function youtubeFetch(endpoint, params) {
+        const url = new URL(`https://www.googleapis.com/youtube/v3/${endpoint}`);
+        url.searchParams.append('key', YOUTUBE_API_KEY);
+        for (let k in params) if (params[k]) url.searchParams.append(k, params[k]);
         try {
             const res = await fetch(url);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return await res.json();
         } catch (err) {
-            showToast('Ошибка загрузки: ' + err.message, true);
+            showToast('Ошибка API YouTube: ' + err.message, true);
             return null;
         }
     }
 
-    async function searchVideos(query, page = 1) {
-        const q = encodeURIComponent(query);
-        const data = await invidiousFetch(`/api/v1/search?q=${q}&type=video&page=${page}`);
-        if (!data) return [];
-        return data.map(item => ({
-            id: item.videoId,
-            title: item.title,
-            channelId: item.authorId,
-            channelTitle: item.author,
-            views: item.viewCount || '0',
-            publishedAt: item.publishedText,
-            thumb: item.videoThumbnails?.[0]?.url || `https://img.youtube.com/vi/${item.videoId}/mqdefault.jpg`
+    async function searchVideos(query, pageToken = null) {
+        let params = { part: 'snippet', maxResults: 20, type: 'video' };
+        if (query) params.q = query;
+        else params.chart = 'mostPopular';
+        if (pageToken) params.pageToken = pageToken;
+        const data = await youtubeFetch('search', params);
+        if (!data) return { items: [], nextPageToken: null };
+        const videoIds = data.items.map(i => i.id.videoId).join(',');
+        let statsMap = {};
+        if (videoIds) {
+            const stats = await youtubeFetch('videos', { part: 'statistics', id: videoIds });
+            if (stats) stats.items.forEach(i => statsMap[i.id] = i.statistics);
+        }
+        const items = data.items.map(i => ({
+            id: i.id.videoId,
+            title: i.snippet.title,
+            channelId: i.snippet.channelId,
+            channelTitle: i.snippet.channelTitle,
+            views: statsMap[i.id.videoId]?.viewCount || '0',
+            publishedAt: i.snippet.publishedAt,
+            thumb: i.snippet.thumbnails.medium.url
         }));
+        return { items, nextPageToken: data.nextPageToken };
     }
 
-    async function getChannelVideos(channelId) {
-        const data = await invidiousFetch(`/api/v1/channels/${channelId}`);
-        if (!data || !data.videos) return [];
-        return data.videos.slice(0,20).map(v => ({
-            id: v.videoId,
-            title: v.title,
-            channelId: channelId,
-            channelTitle: data.author || 'Канал',
-            views: v.viewCount || '0',
-            publishedAt: v.publishedText,
-            thumb: v.videoThumbnails?.[0]?.url || `https://img.youtube.com/vi/${v.videoId}/mqdefault.jpg`
-        }));
+    async function loadMore() {
+        if (isLoading || !nextPageToken) return;
+        isLoading = true;
+        const q = searchInput.value.trim();
+        const result = await searchVideos(q, nextPageToken);
+        if (result.items.length) {
+            currentList = [...currentList, ...result.items];
+            nextPageToken = result.nextPageToken;
+            appendVideos(result.items);
+        }
+        isLoading = false;
     }
 
-    async function getChannelInfo(channelId) {
-        const data = await invidiousFetch(`/api/v1/channels/${channelId}`);
-        if (!data) return { title: 'Канал', subscriberCount: '0', thumb: '' };
-        return {
-            title: data.author,
-            subscriberCount: data.subCount || '0',
-            thumb: data.authorThumbnails?.[0]?.url || ''
-        };
-    }
-
-    // ========== ОТОБРАЖЕНИЕ ГЛАВНОЙ ==========
-    async function loadHome() {
-        showToast('Загрузка...');
-        const videos = await searchVideos('', 1);
-        currentList = videos;
-        renderHome();
-    }
-
-    function renderHome() {
+    function appendVideos(items) {
         let html = '';
-        for(let v of currentList) {
+        for(let v of items) {
             html += `<div class="video-card" data-id="${v.id}">
                 <div class="thumbnail"><img src="${v.thumb}"></div>
                 <div class="video-details">
@@ -198,12 +195,36 @@
                 </div>
             </div>`;
         }
-        homeDiv.innerHTML = html;
+        homeDiv.insertAdjacentHTML('beforeend', html);
         attachCardEvents();
+    }
+
+    // ========== ОТРИСОВКА ГЛАВНОЙ ==========
+    async function renderHome(reset = true) {
+        if (reset) {
+            currentList = [];
+            nextPageToken = null;
+            homeDiv.innerHTML = '';
+        }
+        if (currentList.length === 0) {
+            homeDiv.innerHTML = '<div class="loader">Загрузка...</div>';
+            const q = searchInput.value.trim();
+            const result = await searchVideos(q, null);
+            currentList = result.items;
+            nextPageToken = result.nextPageToken;
+            homeDiv.innerHTML = '';
+            appendVideos(currentList);
+        }
+        const mainDiv = document.querySelector('.main-content');
+        mainDiv.onscroll = () => {
+            if (mainDiv.scrollTop + mainDiv.clientHeight >= mainDiv.scrollHeight - 200) loadMore();
+        };
     }
 
     function attachCardEvents() {
         document.querySelectorAll('.video-card').forEach(card => {
+            if (card.dataset.listener) return;
+            card.dataset.listener = 'true';
             card.onclick = () => {
                 const id = card.dataset.id;
                 const video = currentList.find(v => v.id === id);
@@ -211,11 +232,13 @@
             };
         });
         document.querySelectorAll('.channel-name, .channel-avatar').forEach(el => {
+            if (el.dataset.listenerChan) return;
+            el.dataset.listenerChan = 'true';
             el.onclick = (e) => { e.stopPropagation(); const chId = el.dataset.channelId; if(chId) openChannel(chId); };
         });
     }
 
-    // ========== ПРОСМОТР ВИДЕО ==========
+    // ========== ПРОСМОТР ВИДЕО (через Invidious) ==========
     function openWatch(video) {
         currentVideo = video;
         homeDiv.style.display = 'none';
@@ -270,7 +293,6 @@
         html += `</div></div>`;
         watchDiv.innerHTML = html;
 
-        // Подписка
         document.getElementById('subBtn').onclick = () => {
             if(subscriptions[video.channelId]) {
                 delete subscriptions[video.channelId];
@@ -285,7 +307,6 @@
             }
             saveSubs();
         };
-        // Лайк/дизлайк
         function updateLikeUI() {
             let status = likes[video.id];
             let count = formatViews(parseInt(video.views)/100 + 500);
@@ -306,16 +327,13 @@
             saveLikes(); updateLikeUI(); showToast(likes[video.id]==='dislike' ? 'Дизлайк' : 'Дизлайк убран');
         };
         updateLikeUI();
-        // Поделиться
         document.getElementById('shareBtn').onclick = () => {
             let url = `https://youtu.be/${video.id}`;
             if(navigator.clipboard) navigator.clipboard.writeText(url).then(()=>showToast('Ссылка скопирована')).catch(()=>fallback(url));
             else fallback(url);
             function fallback(t) { let ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showToast('Ссылка скопирована'); }
         };
-        // Скачать (открывает загрузчик)
         document.getElementById('downloadBtn').onclick = () => { window.open('https://presaver.com', '_blank'); showToast('Открыт Presaver'); };
-        // Комментарии
         function renderComments() {
             let listDiv = document.getElementById('commentsList');
             let cmts = comments[video.id] || [];
@@ -333,7 +351,6 @@
             saveComments(); renderComments(); inp.value = ''; showToast('Комментарий добавлен');
         };
         renderComments();
-        // Рекомендации
         document.querySelectorAll('.suggestion-item').forEach(el => {
             el.onclick = () => {
                 let sugId = el.dataset.sugId;
@@ -341,57 +358,76 @@
                 if(sugVideo) openWatch(sugVideo);
             };
         });
-        // Клик по каналу
         document.querySelectorAll('.channel-avatar, .channel-name').forEach(el => {
             el.onclick = (e) => { e.stopPropagation(); let chId = el.dataset.channelId; if(chId) openChannel(chId); };
         });
     }
 
-    // ========== КАНАЛ ==========
+    // ========== КАНАЛ (через Invidious) ==========
     async function openChannel(channelId) {
         showToast('Загрузка канала...');
-        const channelInfo = await getChannelInfo(channelId);
-        const videos = await getChannelVideos(channelId);
-        let isSub = !!subscriptions[channelId];
-        let html = `<div class="channel-header">
-            <div class="channel-banner"><img src="${channelInfo.thumb}"></div>
-            <div><h2>${escapeHtml(channelInfo.title)}</h2><div>${formatViews(channelInfo.subscriberCount)} подписчиков</div>
-            <button class="subscribe-btn ${isSub ? 'subscribed' : ''}" id="channelSubBtn">${isSub ? 'Подписан' : 'Подписаться'}</button></div>
-        </div><div class="video-grid" id="channelVideosGrid"></div>`;
-        channelDiv.innerHTML = html;
-        let gridHtml = '';
-        for(let v of videos) {
-            gridHtml += `<div class="video-card" data-id="${v.id}">
-                <div class="thumbnail"><img src="${v.thumb}"></div>
-                <div class="video-details">
-                    <div class="channel-avatar"><img src="https://via.placeholder.com/36"></div>
-                    <div class="video-info">
-                        <div class="video-title">${escapeHtml(v.title)}</div>
-                        <div class="channel-name">${escapeHtml(v.channelTitle)}</div>
-                        <div class="video-meta">${formatViews(v.views)} просмотров</div>
+        const url = `${INV_INSTANCE}/api/v1/channels/${channelId}`;
+        try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error();
+            const data = await res.json();
+            const channelInfo = {
+                title: data.author,
+                subscriberCount: data.subCount || '0',
+                thumb: data.authorThumbnails?.[0]?.url || ''
+            };
+            const videos = (data.videos || []).slice(0,20).map(v => ({
+                id: v.videoId,
+                title: v.title,
+                channelId: channelId,
+                channelTitle: data.author,
+                views: v.viewCount || '0',
+                thumb: v.videoThumbnails?.[0]?.url || `https://img.youtube.com/vi/${v.videoId}/mqdefault.jpg`
+            }));
+            let isSub = !!subscriptions[channelId];
+            let html = `<div class="channel-header">
+                <div class="channel-banner"><img src="${channelInfo.thumb}"></div>
+                <div><h2>${escapeHtml(channelInfo.title)}</h2><div>${formatViews(channelInfo.subscriberCount)} подписчиков</div>
+                <button class="subscribe-btn ${isSub ? 'subscribed' : ''}" id="channelSubBtn">${isSub ? 'Подписан' : 'Подписаться'}</button></div>
+            </div><div class="video-grid" id="channelVideosGrid"></div>`;
+            channelDiv.innerHTML = html;
+            let gridHtml = '';
+            for(let v of videos) {
+                gridHtml += `<div class="video-card" data-id="${v.id}">
+                    <div class="thumbnail"><img src="${v.thumb}"></div>
+                    <div class="video-details">
+                        <div class="channel-avatar"><img src="https://via.placeholder.com/36"></div>
+                        <div class="video-info">
+                            <div class="video-title">${escapeHtml(v.title)}</div>
+                            <div class="channel-name">${escapeHtml(v.channelTitle)}</div>
+                            <div class="video-meta">${formatViews(v.views)} просмотров</div>
+                        </div>
                     </div>
-                </div>
-            </div>`;
-        }
-        document.getElementById('channelVideosGrid').innerHTML = gridHtml;
-        document.querySelectorAll('#channelVideosGrid .video-card').forEach(card => {
-            card.onclick = () => { let id = card.dataset.id; let video = videos.find(v => v.id === id); if(video) openWatch(video); };
-        });
-        document.getElementById('channelSubBtn').onclick = () => {
-            if(subscriptions[channelId]) {
-                delete subscriptions[channelId];
-                document.getElementById('channelSubBtn').className = 'subscribe-btn';
-                document.getElementById('channelSubBtn').innerHTML = 'Подписаться';
-            } else {
-                subscriptions[channelId] = true;
-                document.getElementById('channelSubBtn').className = 'subscribe-btn subscribed';
-                document.getElementById('channelSubBtn').innerHTML = 'Подписан';
+                </div>`;
             }
-            saveSubs();
-        };
-        homeDiv.style.display = 'none';
-        watchDiv.style.display = 'none';
-        channelDiv.style.display = 'block';
+            document.getElementById('channelVideosGrid').innerHTML = gridHtml;
+            document.querySelectorAll('#channelVideosGrid .video-card').forEach(card => {
+                card.onclick = () => { let id = card.dataset.id; let video = videos.find(v => v.id === id); if(video) openWatch(video); };
+            });
+            document.getElementById('channelSubBtn').onclick = () => {
+                if(subscriptions[channelId]) {
+                    delete subscriptions[channelId];
+                    document.getElementById('channelSubBtn').className = 'subscribe-btn';
+                    document.getElementById('channelSubBtn').innerHTML = 'Подписаться';
+                } else {
+                    subscriptions[channelId] = true;
+                    document.getElementById('channelSubBtn').className = 'subscribe-btn subscribed';
+                    document.getElementById('channelSubBtn').innerHTML = 'Подписан';
+                }
+                saveSubs();
+            };
+            homeDiv.style.display = 'none';
+            watchDiv.style.display = 'none';
+            channelDiv.style.display = 'block';
+        } catch(e) {
+            showToast('Не удалось загрузить канал', true);
+            goHome();
+        }
     }
 
     function renderSubsList() {
@@ -414,7 +450,7 @@
         homeDiv.style.display = 'block';
         watchDiv.style.display = 'none';
         channelDiv.style.display = 'none';
-        loadHome();
+        renderHome(true);
         document.querySelectorAll('.sidebar-item').forEach(item => item.classList.remove('active'));
         document.querySelector('.sidebar-item[data-nav="home"]').classList.add('active');
         if(window.history) history.pushState({ view: 'home' }, '', '/');
@@ -423,17 +459,14 @@
     async function performSearch() {
         let q = searchInput.value.trim();
         if(q === '') return;
-        showToast('Поиск...');
-        const videos = await searchVideos(q, 1);
-        currentList = videos;
-        renderHome();
-        homeDiv.style.display = 'block';
-        watchDiv.style.display = 'none';
-        channelDiv.style.display = 'none';
+        renderHome(true);
     }
 
     // ========== ИНИЦИАЛИЗАЦИЯ ==========
-    loadHome();
+    if (!YOUTUBE_API_KEY || YOUTUBE_API_KEY === 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q') {
+        showToast('⚠️ Вставьте свой YouTube API ключ в коде!', true);
+    }
+    renderHome();
     renderSubsList();
     searchBtn.onclick = performSearch;
     searchInput.onkeypress = e => { if(e.keyCode === 13) performSearch(); };
