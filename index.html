@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>YouTube</title>
+    <title>YouTube (обход блокировок)</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial, sans-serif; background: #f9f9f9; font-size: 14px; }
@@ -77,12 +77,43 @@
 <div id="toastMsg" class="toast-msg"></div>
 
 <script>
-    // ========== НАСТРОЙКИ ==========
-    // ВСТАВЬТЕ СВОЙ API КЛЮЧ YouTube (получить в Google Cloud Console)
-    const YOUTUBE_API_KEY = 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q'; // ЗАМЕНИТЕ НА СВОЙ
-    // Invidious инстанс (проксирует видео, обходит блокировки)
-    const INV_INSTANCE = 'https://inv.riverside.rocks'; // можно сменить на yewtu.be и др.
-    // =====================================================
+    // ========== ВАШ API КЛЮЧ (уже вставлен) ==========
+    const YOUTUBE_API_KEY = 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q';
+    // ========== СПИСОК РАБОЧИХ INVIOUS INSTANCES ==========
+    const INV_INSTANCES = [
+        'https://yewtu.be',
+        'https://invidious.snopyta.org',
+        'https://vid.puffyan.us',
+        'https://inv.riverside.rocks',
+        'https://invidious.namazso.eu',
+        'https://invidious.tiekoetter.com'
+    ];
+    let currentInvInstance = INV_INSTANCES[0];
+    let invInstanceIndex = 0;
+
+    async function testInvInstance(instance) {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+            const res = await fetch(`${instance}/api/v1/search?q=test`, { signal: controller.signal });
+            clearTimeout(timeout);
+            return res.ok;
+        } catch { return false; }
+    }
+
+    async function selectWorkingInvInstance() {
+        for (let i = 0; i < INV_INSTANCES.length; i++) {
+            const inst = INV_INSTANCES[i];
+            if (await testInvInstance(inst)) {
+                currentInvInstance = inst;
+                invInstanceIndex = i;
+                console.log(`Using Invidious instance: ${currentInvInstance}`);
+                return true;
+            }
+        }
+        showToast('⚠️ Не удалось найти рабочий прокси-сервер для видео', true);
+        return false;
+    }
 
     // ========== ПОЛИФИЛЛЫ ==========
     if (!window.localStorage) {
@@ -104,7 +135,6 @@
     let nextPageToken = null;
     let isLoading = false;
 
-    // DOM
     const homeDiv = document.getElementById('homeContainer');
     const watchDiv = document.getElementById('watchContainer');
     const channelDiv = document.getElementById('channelContainer');
@@ -238,7 +268,7 @@
         });
     }
 
-    // ========== ПРОСМОТР ВИДЕО (через Invidious) ==========
+    // ========== ПРОСМОТР ВИДЕО (через рабочий Invidious) ==========
     function openWatch(video) {
         currentVideo = video;
         homeDiv.style.display = 'none';
@@ -253,7 +283,7 @@
         let isSub = !!subscriptions[video.channelId];
         let likeStatus = likes[video.id];
         let likeCount = formatViews(parseInt(video.views)/100 + 500);
-        let embedUrl = `${INV_INSTANCE}/embed/${video.id}`;
+        let embedUrl = `${currentInvInstance}/embed/${video.id}`;
         let html = `<div class="watch-main">
             <div class="video-player"><iframe src="${embedUrl}" allowfullscreen></iframe></div>
             <div class="watch-title">${escapeHtml(video.title)}</div>
@@ -293,6 +323,7 @@
         html += `</div></div>`;
         watchDiv.innerHTML = html;
 
+        // Подписка
         document.getElementById('subBtn').onclick = () => {
             if(subscriptions[video.channelId]) {
                 delete subscriptions[video.channelId];
@@ -365,8 +396,9 @@
 
     // ========== КАНАЛ (через Invidious) ==========
     async function openChannel(channelId) {
+        if (!currentInvInstance) await selectWorkingInvInstance();
         showToast('Загрузка канала...');
-        const url = `${INV_INSTANCE}/api/v1/channels/${channelId}`;
+        const url = `${currentInvInstance}/api/v1/channels/${channelId}`;
         try {
             const res = await fetch(url);
             if (!res.ok) throw new Error();
@@ -463,24 +495,27 @@
     }
 
     // ========== ИНИЦИАЛИЗАЦИЯ ==========
-    if (!YOUTUBE_API_KEY || YOUTUBE_API_KEY === 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q') {
-        showToast('⚠️ Вставьте свой YouTube API ключ в коде!', true);
-    }
-    renderHome();
-    renderSubsList();
-    searchBtn.onclick = performSearch;
-    searchInput.onkeypress = e => { if(e.keyCode === 13) performSearch(); };
-    logoBtn.onclick = goHome;
-    document.getElementById('avatarMock').onclick = () => showToast('Аккаунт');
-    document.querySelectorAll('.sidebar-item[data-nav]').forEach(el => {
-        el.onclick = () => { if(el.dataset.nav === 'home') goHome(); else showToast('Раздел в разработке'); };
-    });
-    window.onpopstate = (e) => {
-        if(e.state && e.state.view === 'watch' && e.state.id) {
-            let video = currentList.find(v => v.id === e.state.id);
-            if(video) openWatch(video);
-        } else goHome();
-    };
+    (async () => {
+        await selectWorkingInvInstance();
+        if (!YOUTUBE_API_KEY || YOUTUBE_API_KEY === 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q') {
+            showToast('⚠️ Используется тестовый API ключ. Возможно, его квота исчерпана.', true);
+        }
+        renderHome();
+        renderSubsList();
+        searchBtn.onclick = performSearch;
+        searchInput.onkeypress = e => { if(e.keyCode === 13) performSearch(); };
+        logoBtn.onclick = goHome;
+        document.getElementById('avatarMock').onclick = () => showToast('Аккаунт');
+        document.querySelectorAll('.sidebar-item[data-nav]').forEach(el => {
+            el.onclick = () => { if(el.dataset.nav === 'home') goHome(); else showToast('Раздел в разработке'); };
+        });
+        window.onpopstate = (e) => {
+            if(e.state && e.state.view === 'watch' && e.state.id) {
+                let video = currentList.find(v => v.id === e.state.id);
+                if(video) openWatch(video);
+            } else goHome();
+        };
+    })();
 </script>
 </body>
 </html>
