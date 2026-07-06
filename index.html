@@ -1,12 +1,34 @@
 <!DOCTYPE html>
+<!--
+  ==============================================================
+  ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ ВАШЕГО VPN
+  ==============================================================
+  1. Сохраните ваш конфиг в файл config.json и запустите Xray:
+       xray run -c config.json
+     (После запуска будут доступны прокси: SOCKS5 на порту 10808,
+      HTTP на порту 10809)
+
+  2. Настройте браузер на использование прокси:
+     - Рекомендуется расширение Proxy SwitchyOmega (SOCKS5,
+       127.0.0.1:10808).
+     - Или системный прокси (Windows: Параметры → Сеть → Прокси).
+
+  3. Откройте этот HTML-файл – теперь все запросы к YouTube API
+     и загрузка видео будут идти через ваш VPN.
+
+  4. Если прокси не настроен, страница автоматически использует
+     Invidious (публичные прокси) и работает без VPN.
+  ==============================================================
+-->
 <html lang="ru">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-    <title>YouTube (встроенный плеер)</title>
+    <title>YouTube (гибридный + VPN-ready)</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
     <style>
+        /* ---------------------- Стили (полный набор) ---------------------- */
         :root {
             --bg-primary: #f9f9f9;
             --bg-secondary: #ffffff;
@@ -35,6 +57,1784 @@
             background: var(--bg-primary);
             color: var(--text-primary);
             overflow-x: hidden;
+            transition: background var(--transition), color var(--transition);
+        }
+        .header {
+            position: sticky;
+            top: 0;
+            background: var(--bg-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            height: 56px;
+            border-bottom: 1px solid var(--border-color);
+            z-index: 100;
+            transition: background var(--transition), border var(--transition);
+        }
+        .header-left { display: flex; align-items: center; gap: 18px; }
+        .menu-icon, .logo-icon { cursor: pointer; font-size: 24px; color: var(--text-primary); }
+        .logo-icon i { color: #ff0000; }
+        .header-center {
+            flex: 1;
+            max-width: 600px;
+            margin: 0 20px;
+            display: flex;
+            gap: 6px;
+        }
+        .search-form {
+            display: flex;
+            flex: 1;
+        }
+        .search-input {
+            flex: 1;
+            padding: 0 12px;
+            height: 40px;
+            border: 1px solid var(--border-color);
+            border-radius: 40px 0 0 40px;
+            outline: none;
+            font-size: 16px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            transition: border var(--transition);
+        }
+        .search-input:focus { border-color: #065fd4; }
+        .search-btn {
+            background: var(--bg-hover);
+            border: 1px solid var(--border-color);
+            border-left: none;
+            border-radius: 0 40px 40px 0;
+            padding: 0 20px;
+            cursor: pointer;
+            color: var(--text-primary);
+        }
+        .filter-select {
+            height: 40px;
+            padding: 0 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 40px;
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 14px;
+            outline: none;
+        }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .icon-btn, .avatar {
+            cursor: pointer;
+            color: var(--text-primary);
+            font-size: 20px;
+        }
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #6b6b6b;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        .theme-toggle {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: var(--text-primary);
+        }
+        .app-container {
+            display: flex;
+            min-height: calc(100vh - 56px);
+        }
+        .sidebar {
+            width: 240px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            padding: 12px 0;
+            flex-shrink: 0;
+            overflow-y: auto;
+            height: calc(100vh - 56px);
+            position: sticky;
+            top: 56px;
+            transition: background var(--transition), border var(--transition);
+        }
+        .sidebar-item {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            padding: 8px 24px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-primary);
+            transition: background 0.1s;
+        }
+        .sidebar-item:hover { background: var(--bg-hover); }
+        .sidebar-item.active { background: var(--bg-active); }
+        .sidebar-divider {
+            border-top: 1px solid var(--border-color);
+            margin: 12px 0;
+        }
+        .sidebar-subscriptions {
+            border-top: 1px solid var(--border-color);
+            margin-top: 12px;
+            padding-top: 12px;
+        }
+        .main-content {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            height: calc(100vh - 56px);
+        }
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 28px 16px;
+        }
+        .video-card {
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        .video-card:hover { transform: scale(0.99); }
+        .thumbnail img {
+            width: 100%;
+            aspect-ratio: 16/9;
+            object-fit: cover;
+            border-radius: var(--radius);
+            background: #222;
+        }
+        .video-details {
+            display: flex;
+            margin-top: 12px;
+            gap: 12px;
+        }
+        .channel-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            overflow: hidden;
+            background: #aaa;
+            flex-shrink: 0;
+            cursor: pointer;
+        }
+        .channel-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .video-info { flex: 1; }
+        .video-title {
+            font-weight: 500;
+            font-size: 14px;
+            line-height: 1.3;
+            margin-bottom: 6px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .channel-name {
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+        .video-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .watch-container { max-width: 1300px; margin: 0 auto; }
+        .watch-grid { display: flex; gap: 24px; flex-wrap: wrap; }
+        .watch-main { flex: 2; min-width: 280px; }
+        .watch-sidebar { flex: 1; min-width: 280px; }
+        .video-player-container {
+            position: relative;
+            background: #000;
+            border-radius: var(--radius);
+            overflow: hidden;
+            width: 100%;
+            aspect-ratio: 16/9;
+        }
+        .video-player-container video {
+            width: 100%;
+            height: 100%;
+            display: block;
+            background: #000;
+        }
+        .video-controls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 8px 12px;
+            background: linear-gradient(transparent, rgba(0,0,0,0.7));
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: white;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .video-player-container:hover .video-controls,
+        .video-player-container:focus-within .video-controls {
+            opacity: 1;
+        }
+        .video-controls button {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 4px;
+        }
+        .video-controls input[type="range"] {
+            flex: 1;
+            height: 4px;
+            -webkit-appearance: none;
+            background: rgba(255,255,255,0.3);
+            border-radius: 2px;
+            outline: none;
+        }
+        .video-controls input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff0000;
+            cursor: pointer;
+        }
+        .video-controls .time {
+            font-size: 13px;
+            min-width: 100px;
+        }
+        .video-controls .quality-select {
+            background: rgba(0,0,0,0.6);
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .watch-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin: 16px 0 12px;
+        }
+        .watch-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 12px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .channel-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .subscribe-btn {
+            background: #0f0f0f;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 40px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .subscribe-btn.subscribed {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        .like-dislike {
+            display: flex;
+            gap: 8px;
+            background: var(--bg-hover);
+            border-radius: 40px;
+            padding: 4px 8px;
+        }
+        .like-btn, .dislike-btn {
+            background: none;
+            border: none;
+            font-weight: 500;
+            padding: 6px 12px;
+            border-radius: 40px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-primary);
+        }
+        .like-btn.active, .dislike-btn.active {
+            background: var(--bg-active);
+            color: #065fd4;
+        }
+        .share-btn, .save-btn {
+            background: var(--bg-hover);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 40px;
+            font-weight: 500;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-primary);
+        }
+        .watch-description {
+            background: var(--bg-hover);
+            padding: 16px;
+            border-radius: var(--radius);
+            margin: 16px 0;
+            font-size: 14px;
+            white-space: pre-wrap;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        .comment-section { margin-top: 24px; }
+        .comment-input {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .comment-input input {
+            flex: 1;
+            border: none;
+            border-bottom: 1px solid var(--border-color);
+            padding: 8px 0;
+            font-size: 14px;
+            outline: none;
+            background: transparent;
+            color: var(--text-primary);
+        }
+        .comment-input button {
+            background: #065fd4;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 8px 16px;
+            cursor: pointer;
+        }
+        .comment {
+            display: flex;
+            gap: 12px;
+            margin: 16px 0;
+        }
+        .comment-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: #ccc;
+            overflow: hidden;
+        }
+        .comment-text {
+            background: var(--bg-hover);
+            padding: 10px 14px;
+            border-radius: 18px;
+            font-size: 14px;
+        }
+        .suggestion-item {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            padding: 6px;
+            border-radius: 8px;
+            transition: background 0.1s;
+        }
+        .suggestion-item:hover { background: var(--bg-hover); }
+        .suggestion-thumb {
+            width: 168px;
+            aspect-ratio: 16/9;
+            border-radius: 8px;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .suggestion-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .suggestion-info { flex: 1; }
+        .suggestion-title {
+            font-weight: 500;
+            font-size: 14px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .channel-header {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            padding: 24px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            margin-bottom: 24px;
+            box-shadow: var(--shadow);
+        }
+        .channel-banner img {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+        }
+        .playlist-manager {
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow);
+        }
+        .playlist-manager input {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            padding: 8px 12px;
+            border-radius: 40px;
+            color: var(--text-primary);
+            outline: none;
+        }
+        .playlist-manager button {
+            background: #065fd4;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 40px;
+            cursor: pointer;
+            margin-left: 8px;
+        }
+        .playlist-item {
+            display: flex;
+            flex-direction: column;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            margin-bottom: 16px;
+            box-shadow: var(--shadow);
+        }
+        .playlist-item .playlist-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .playlist-item .video-entry {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .playlist-item button.danger {
+            background: none;
+            border: none;
+            color: #d32f2f;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .loader, .loading-indicator {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+            font-size: 18px;
+        }
+        .loading-indicator { padding: 20px; }
+        .toast-msg {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #323232;
+            color: white;
+            padding: 8px 18px;
+            border-radius: 40px;
+            font-size: 13px;
+            z-index: 200;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+        .toast-msg.error { background: #d32f2f; }
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main-content { padding: 16px; }
+            .header-center { max-width: 180px; }
+            .filter-select { display: none; }
+        }
+        @media (max-width: 600px) {
+            .header-center { max-width: 120px; }
+            .header-right .icon-btn { display: none; }
+        }
+        .hidden { display: none !important; }
+        .flex { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+
+<!-- ===================== ШАПКА ===================== -->
+<div class="header">
+    <div class="header-left">
+        <div class="menu-icon" id="menuMockBtn"><i class="fas fa-bars"></i></div>
+        <div class="logo-icon" id="logoBtn"><i class="fab fa-youtube"></i><span>YouTube</span></div>
+    </div>
+    <div class="header-center">
+        <div class="search-form">
+            <input type="text" class="search-input" id="searchInput" placeholder="Поиск" />
+            <button class="search-btn" id="searchBtn"><i class="fas fa-search"></i></button>
+        </div>
+        <select class="filter-select" id="filterSelect">
+            <option value="relevance">По релевантности</option>
+            <option value="date">По дате</option>
+            <option value="viewCount">По просмотрам</option>
+            <option value="rating">По рейтингу</option>
+        </select>
+    </div>
+    <div class="header-right">
+        <button class="theme-toggle" id="themeToggle"><i class="fas fa-moon"></i></button>
+        <i class="fas fa-video icon-btn" id="createMockBtn"></i>
+        <i class="fas fa-bell icon-btn" id="notifyMockBtn"></i>
+        <div class="avatar" id="avatarMock">Ю</div>
+    </div>
+</div>
+
+<!-- ===================== ОСНОВНОЙ КОНТЕЙНЕР ===================== -->
+<div class="app-container">
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-item active" data-nav="home"><i class="fas fa-home"></i> <span>Главная</span></div>
+        <div class="sidebar-item" data-nav="explore"><i class="fas fa-compass"></i> <span>Explore</span></div>
+        <div class="sidebar-item" data-nav="subscriptions"><i class="fas fa-film"></i> <span>Подписки</span></div>
+        <div class="sidebar-item" data-nav="library"><i class="fas fa-clock"></i> <span>Библиотека</span></div>
+        <div class="sidebar-item" data-nav="history"><i class="fas fa-history"></i> <span>История</span></div>
+        <div class="sidebar-item" data-nav="playlists"><i class="fas fa-list"></i> <span>Плейлисты</span></div>
+        <div class="sidebar-item" data-nav="watchlater"><i class="fas fa-clock"></i> <span>Посмотреть позже</span></div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-subscriptions" id="sidebarSubscriptions">
+            <div class="sidebar-item" style="pointer-events:none;"><i class="fas fa-users"></i> <span>Подписки</span></div>
+            <div id="subscriptionsList"></div>
+        </div>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-item" id="clearHistoryBtn" style="color:#d32f2f;"><i class="fas fa-trash"></i> <span>Очистить историю</span></div>
+    </div>
+
+    <div class="main-content" id="mainContent">
+        <div id="homeContainer" class="video-grid"></div>
+        <div id="watchContainer" style="display:none;"></div>
+        <div id="channelContainer" style="display:none;"></div>
+        <div id="playlistContainer" style="display:none;"></div>
+        <div id="historyContainer" style="display:none;"></div>
+        <div id="loadingIndicator" class="loading-indicator" style="display:none;">Загрузка...</div>
+    </div>
+</div>
+
+<div id="toastMsg" class="toast-msg"></div>
+
+<!-- ===================== СКРИПТЫ ===================== -->
+<script>
+    // ================================================================
+    // 1. КЛЮЧ YOUTUBE API (можно заменить на свой)
+    // ================================================================
+    const YOUTUBE_API_KEY = 'AIzaSyAVW5CcOl4xoWxB_loSRzOcnXDpcq_Io3Q';
+
+    // ================================================================
+    // 2. ПУБЛИЧНЫЕ ИНСТАНСЫ INVIDIOUS (резерв, если API недоступен)
+    // ================================================================
+    const INVIDIOUS_INSTANCES = [
+        'https://yewtu.be',
+        'https://invidious.snopyta.org',
+        'https://inv.riverside.rocks',
+        'https://invidious.kavin.rocks'
+    ];
+    let currentInstance = 0;
+    let apiMode = 'youtube'; // 'youtube' или 'invidious'
+
+    // ================================================================
+    // 3. КЭШИРОВАНИЕ В LOCALSTORAGE
+    // ================================================================
+    function getCached(key, ttl = 600000) {
+        try {
+            const raw = localStorage.getItem('yt_cache_' + key);
+            if (!raw) return null;
+            const data = JSON.parse(raw);
+            if (Date.now() - data.timestamp > ttl) return null;
+            return data.value;
+        } catch { return null; }
+    }
+    function setCache(key, value) {
+        localStorage.setItem('yt_cache_' + key, JSON.stringify({ timestamp: Date.now(), value }));
+    }
+
+    // ================================================================
+    // 4. ГИБРИДНЫЙ API-СЛОЙ
+    //    - Сначала пытается использовать официальный YouTube API.
+    //    - Если не получается (блокировка, ошибка) – переключается
+    //      на Invidious (работает без VPN).
+    //    - Если вы настроили браузер на прокси (SOCKS5 127.0.0.1:10808),
+    //      то YouTube API будет работать через VPN, и Invidious не
+    //      понадобится.
+    // ================================================================
+    async function fetchFromAPI(endpoint, params = {}) {
+        if (apiMode === 'youtube') {
+            try {
+                const url = new URL(`https://www.googleapis.com/youtube/v3/${endpoint}`);
+                url.searchParams.append('key', YOUTUBE_API_KEY);
+                Object.keys(params).forEach(k => {
+                    if (params[k] !== undefined && params[k] !== null && params[k] !== '')
+                        url.searchParams.append(k, params[k]);
+                });
+                const resp = await fetch(url);
+                if (!resp.ok) {
+                    const error = await resp.json();
+                    throw new Error(error.error?.message || `HTTP ${resp.status}`);
+                }
+                return await resp.json();
+            } catch (e) {
+                console.warn('YouTube API ошибка, переключаемся на Invidious:', e.message);
+                apiMode = 'invidious';
+                return fetchFromInvidious(endpoint, params);
+            }
+        } else {
+            return fetchFromInvidious(endpoint, params);
+        }
+    }
+
+    async function fetchFromInvidious(endpoint, params = {}) {
+        let lastError;
+        let invidiousEndpoint = '';
+        let invidiousParams = { ...params };
+
+        if (endpoint === 'search') {
+            invidiousEndpoint = '/api/v1/search';
+            invidiousParams.type = 'video';
+            invidiousParams.q = params.q;
+            invidiousParams.sort_by = params.order || 'relevance';
+            delete invidiousParams.type;
+            delete invidiousParams.q;
+            delete invidiousParams.order;
+        } else if (endpoint === 'videos' && params.chart === 'mostPopular') {
+            invidiousEndpoint = '/api/v1/trending';
+            invidiousParams.region = params.regionCode || 'US';
+            delete invidiousParams.chart;
+            delete invidiousParams.regionCode;
+        } else if (endpoint === 'videos' && params.id) {
+            invidiousEndpoint = `/api/v1/videos/${params.id}`;
+            invidiousParams = {};
+        } else if (endpoint === 'search' && params.channelId) {
+            invidiousEndpoint = `/api/v1/channels/${params.channelId}`;
+            invidiousParams = {};
+        } else if (endpoint === 'channels' && params.id) {
+            invidiousEndpoint = `/api/v1/channels/${params.id}`;
+            invidiousParams = {};
+        } else {
+            invidiousEndpoint = '/api/v1/search';
+            invidiousParams.type = 'video';
+            invidiousParams.q = params.q || 'popular';
+        }
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                const inst = INVIDIOUS_INSTANCES[currentInstance % INVIDIOUS_INSTANCES.length];
+                const url = new URL(`${inst}${invidiousEndpoint}`);
+                Object.keys(invidiousParams).forEach(k => {
+                    if (invidiousParams[k] !== undefined && invidiousParams[k] !== null && invidiousParams[k] !== '')
+                        url.searchParams.append(k, invidiousParams[k]);
+                });
+                const resp = await fetch(url);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+
+                if (Array.isArray(data)) {
+                    return { items: data.map(item => ({
+                        id: item.videoId,
+                        snippet: {
+                            title: item.title,
+                            channelId: item.authorId,
+                            channelTitle: item.author,
+                            publishedAt: item.published || new Date().toISOString(),
+                            description: item.description || '',
+                            thumbnails: {
+                                default: { url: item.videoThumbnails?.[0]?.url || '' },
+                                medium: { url: item.videoThumbnails?.[0]?.url || '' },
+                                high: { url: item.videoThumbnails?.[0]?.url || '' }
+                            }
+                        },
+                        statistics: {
+                            viewCount: item.viewCount || 0,
+                            likeCount: item.likeCount || 0,
+                            dislikeCount: item.dislikeCount || 0
+                        }
+                    })), nextPageToken: null };
+                } else if (data.videoId) {
+                    return { items: [{
+                        id: data.videoId,
+                        snippet: {
+                            title: data.title,
+                            channelId: data.authorId,
+                            channelTitle: data.author,
+                            publishedAt: data.published || new Date().toISOString(),
+                            description: data.description || '',
+                            thumbnails: {
+                                default: { url: data.videoThumbnails?.[0]?.url || '' },
+                                medium: { url: data.videoThumbnails?.[0]?.url || '' },
+                                high: { url: data.videoThumbnails?.[0]?.url || '' }
+                            }
+                        },
+                        statistics: {
+                            viewCount: data.viewCount || 0,
+                            likeCount: data.likeCount || 0,
+                            dislikeCount: data.dislikeCount || 0
+                        }
+                    }] };
+                } else if (data.relatedStreams) {
+                    return { items: data.relatedStreams.map(item => ({
+                        id: item.videoId,
+                        snippet: {
+                            title: item.title,
+                            channelId: item.authorId || params.channelId,
+                            channelTitle: item.author || data.author,
+                            publishedAt: item.published || new Date().toISOString(),
+                            thumbnails: {
+                                default: { url: item.videoThumbnails?.[0]?.url || '' },
+                                medium: { url: item.videoThumbnails?.[0]?.url || '' },
+                                high: { url: item.videoThumbnails?.[0]?.url || '' }
+                            }
+                        },
+                        statistics: {
+                            viewCount: item.viewCount || 0,
+                            likeCount: item.likeCount || 0
+                        }
+                    })), nextPageToken: null };
+                } else if (data.author) {
+                    return { items: [], nextPageToken: null, channelInfo: data };
+                } else {
+                    throw new Error('Неизвестный формат ответа от Invidious');
+                }
+            } catch (e) {
+                lastError = e;
+                currentInstance++;
+                await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            }
+        }
+        throw lastError || new Error('Не удалось загрузить данные через Invidious');
+    }
+
+    // Обёртки для удобства
+    async function searchVideos(query, order = 'relevance', pageToken = null) {
+        const cacheKey = `search_${query}_${order}_${pageToken || ''}`;
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+        const data = await fetchFromAPI('search', {
+            part: 'snippet',
+            maxResults: 20,
+            q: query,
+            type: 'video',
+            order: order,
+            pageToken: pageToken || ''
+        });
+        if (apiMode === 'youtube') {
+            const videoIds = data.items.map(item => item.id).join(',');
+            if (videoIds) {
+                const stats = await fetchFromAPI('videos', {
+                    part: 'statistics',
+                    id: videoIds
+                });
+                const statsMap = {};
+                stats.items.forEach(item => { statsMap[item.id] = item.statistics; });
+                data.items.forEach(item => {
+                    item.statistics = statsMap[item.id] || { viewCount: 0, likeCount: 0 };
+                });
+            }
+        }
+        const result = { items: data.items, nextPageToken: data.nextPageToken || null };
+        setCache(cacheKey, result);
+        return result;
+    }
+
+    async function getTrending(region = 'US', pageToken = null) {
+        const cacheKey = `trending_${region}_${pageToken || ''}`;
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+        const data = await fetchFromAPI('videos', {
+            part: 'snippet,statistics',
+            chart: 'mostPopular',
+            maxResults: 20,
+            regionCode: region,
+            pageToken: pageToken || ''
+        });
+        const result = { items: data.items, nextPageToken: data.nextPageToken || null };
+        setCache(cacheKey, result);
+        return result;
+    }
+
+    async function getVideoInfo(videoId) {
+        const cacheKey = `video_${videoId}`;
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+        const data = await fetchFromAPI('videos', {
+            part: 'snippet,statistics',
+            id: videoId
+        });
+        if (!data.items || data.items.length === 0) throw new Error('Видео не найдено');
+        const info = data.items[0];
+        setCache(cacheKey, info);
+        return info;
+    }
+
+    async function getChannelVideos(channelId, pageToken = null) {
+        const cacheKey = `channel_${channelId}_${pageToken || ''}`;
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+        const data = await fetchFromAPI('search', {
+            part: 'snippet',
+            channelId: channelId,
+            maxResults: 20,
+            order: 'date',
+            type: 'video',
+            pageToken: pageToken || ''
+        });
+        if (apiMode === 'youtube') {
+            const videoIds = data.items.map(item => item.id).join(',');
+            if (videoIds) {
+                const stats = await fetchFromAPI('videos', {
+                    part: 'statistics',
+                    id: videoIds
+                });
+                const statsMap = {};
+                stats.items.forEach(item => { statsMap[item.id] = item.statistics; });
+                data.items.forEach(item => {
+                    item.statistics = statsMap[item.id] || { viewCount: 0, likeCount: 0 };
+                });
+            }
+        }
+        const result = { items: data.items, nextPageToken: data.nextPageToken || null };
+        setCache(cacheKey, result);
+        return result;
+    }
+
+    async function getChannelInfo(channelId) {
+        const cacheKey = `channelInfo_${channelId}`;
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+        const data = await fetchFromAPI('channels', {
+            part: 'snippet,statistics',
+            id: channelId
+        });
+        if (!data.items || data.items.length === 0) throw new Error('Канал не найден');
+        const info = data.items[0];
+        setCache(cacheKey, info);
+        return info;
+    }
+
+    // ================================================================
+    // 5. ПОЛУЧЕНИЕ ПОТОКОВ ВИДЕО (для плеера)
+    //    – Всегда используем Invidious, чтобы не зависеть от блокировок
+    //      youtube.com. Если у вас настроен прокси, запросы пойдут
+    //      через него, но даже без прокси Invidious работает.
+    // ================================================================
+    async function getVideoStreams(videoId) {
+        let lastError;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                const inst = INVIDIOUS_INSTANCES[currentInstance % INVIDIOUS_INSTANCES.length];
+                const url = new URL(`${inst}/api/v1/streams/${videoId}`);
+                const resp = await fetch(url);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                return await resp.json();
+            } catch (e) {
+                lastError = e;
+                currentInstance++;
+                await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            }
+        }
+        throw lastError || new Error('Не удалось получить потоки видео');
+    }
+
+    // ================================================================
+    // 6. ПЛЕЕР НА HTML5 VIDEO
+    // ================================================================
+    async function playVideoWithInvidious(videoId, videoElement) {
+        try {
+            const streams = await getVideoStreams(videoId);
+            let videoStreams = streams.videoStreams || [];
+            videoStreams.sort((a, b) => {
+                const qa = parseInt((a.qualityLabel || '0p').replace('p',''));
+                const qb = parseInt((b.qualityLabel || '0p').replace('p',''));
+                return qb - qa;
+            });
+            let selectedVideo = videoStreams.find(v => v.qualityLabel === '720p') || videoStreams[0];
+            if (!selectedVideo && streams.formatStreams) {
+                const formatVideo = streams.formatStreams.find(f => f.encoding === 'video/mp4' && f.qualityLabel);
+                if (formatVideo) selectedVideo = formatVideo;
+            }
+            if (!selectedVideo) throw new Error('Нет видео-потока');
+
+            let finalUrl = selectedVideo.url;
+            if (streams.formatStreams) {
+                const combined = streams.formatStreams.find(f => f.encoding === 'video/mp4' && f.qualityLabel);
+                if (combined && combined.qualityLabel === selectedVideo.qualityLabel) {
+                    finalUrl = combined.url;
+                }
+            }
+            if (finalUrl.startsWith('/')) {
+                const inst = INVIDIOUS_INSTANCES[currentInstance % INVIDIOUS_INSTANCES.length];
+                finalUrl = inst + finalUrl;
+            }
+            videoElement.src = finalUrl;
+            videoElement.load();
+            videoElement.play().catch(() => {});
+            return true;
+        } catch (err) {
+            console.error('Ошибка загрузки потока:', err);
+            return false;
+        }
+    }
+
+    function formatTime(seconds) {
+        if (!seconds) return '0:00';
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        return `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    // ================================================================
+    // 7. СОСТОЯНИЕ И ХРАНИЛИЩЕ
+    // ================================================================
+    let currentView = 'home';
+    let currentVideoId = null;
+    let currentChannelId = null;
+    let searchQuery = '';
+    let videosList = [];
+    let nextPageToken = null;
+    let isLoading = false;
+    let hasMore = true;
+    let loadTimeout = null;
+    let currentVideoData = null;
+    let comments = {};
+    let subscriptions = new Set();
+    let likes = {};
+    let history = [];
+    let playlists = {};
+    let watchLater = [];
+
+    const homeContainer = document.getElementById('homeContainer');
+    const watchContainer = document.getElementById('watchContainer');
+    const channelContainer = document.getElementById('channelContainer');
+    const playlistContainer = document.getElementById('playlistContainer');
+    const historyContainer = document.getElementById('historyContainer');
+    const searchInput = document.getElementById('searchInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const filterSelect = document.getElementById('filterSelect');
+    const logoBtn = document.getElementById('logoBtn');
+    const toastMsgDiv = document.getElementById('toastMsg');
+    const loadingIndicator = document.getElementById('loadingIndicator');
+    const themeToggle = document.getElementById('themeToggle');
+
+    function loadStorage() {
+        try {
+            const savedSubs = localStorage.getItem('youtube_subscriptions');
+            if (savedSubs) subscriptions = new Set(JSON.parse(savedSubs));
+            const savedLikes = localStorage.getItem('youtube_likes');
+            if (savedLikes) likes = JSON.parse(savedLikes);
+            const savedComments = localStorage.getItem('youtube_comments');
+            if (savedComments) comments = JSON.parse(savedComments);
+            const savedHistory = localStorage.getItem('youtube_history');
+            if (savedHistory) history = JSON.parse(savedHistory);
+            const savedPlaylists = localStorage.getItem('youtube_playlists');
+            if (savedPlaylists) playlists = JSON.parse(savedPlaylists);
+            const savedWatchLater = localStorage.getItem('youtube_watchlater');
+            if (savedWatchLater) watchLater = JSON.parse(savedWatchLater);
+            const savedTheme = localStorage.getItem('youtube_theme');
+            if (savedTheme === 'dark') document.body.classList.add('dark');
+        } catch(e) {}
+    }
+    function saveSubscriptions() {
+        localStorage.setItem('youtube_subscriptions', JSON.stringify([...subscriptions]));
+        updateSidebarSubscriptions();
+    }
+    function saveLikes() { localStorage.setItem('youtube_likes', JSON.stringify(likes)); }
+    function saveComments() { localStorage.setItem('youtube_comments', JSON.stringify(comments)); }
+    function saveHistory() { localStorage.setItem('youtube_history', JSON.stringify(history)); }
+    function savePlaylists() { localStorage.setItem('youtube_playlists', JSON.stringify(playlists)); }
+    function saveWatchLater() { localStorage.setItem('youtube_watchlater', JSON.stringify(watchLater)); }
+    function saveTheme(isDark) {
+        localStorage.setItem('youtube_theme', isDark ? 'dark' : 'light');
+    }
+
+    function showToast(message, isError = false) {
+        toastMsgDiv.innerText = message;
+        toastMsgDiv.className = 'toast-msg' + (isError ? ' error' : '');
+        toastMsgDiv.style.opacity = '1';
+        clearTimeout(toastMsgDiv._timeout);
+        toastMsgDiv._timeout = setTimeout(() => { toastMsgDiv.style.opacity = '0'; }, 3000);
+    }
+
+    function formatViewCount(n) {
+        if (!n) return '0 просмотров';
+        const num = parseInt(n);
+        if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M просмотров';
+        if (num >= 1000) return (num / 1000).toFixed(0) + 'K просмотров';
+        return num + ' просмотров';
+    }
+    function formatNumber(n) {
+        if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+        if (n >= 1000) return (n / 1000).toFixed(0) + 'K';
+        return n.toString();
+    }
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/[&<>]/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[m] || m));
+    }
+
+    // ================================================================
+    // 8. РЕНДЕРИНГ ГЛАВНОЙ
+    // ================================================================
+    async function renderHome(reset = true) {
+        if (reset) {
+            videosList = [];
+            nextPageToken = null;
+            hasMore = true;
+            homeContainer.innerHTML = '';
+        }
+        if (videosList.length === 0) {
+            homeContainer.innerHTML = '<div class="loader"><i class="fas fa-spinner fa-pulse"></i> Загрузка...</div>';
+            try {
+                let result;
+                if (searchQuery.trim()) {
+                    const sort = filterSelect.value;
+                    result = await searchVideos(searchQuery, sort, nextPageToken);
+                } else {
+                    result = await getTrending('US', nextPageToken);
+                }
+                if (!result.items || result.items.length === 0) throw new Error('Ничего не найдено');
+                videosList = result.items;
+                nextPageToken = result.nextPageToken;
+                hasMore = !!nextPageToken;
+                homeContainer.innerHTML = '';
+                appendVideosToHome(videosList);
+            } catch (err) {
+                homeContainer.innerHTML = `<div class="loader">Ошибка: ${err.message}</div>`;
+                showToast('Ошибка загрузки: ' + err.message, true);
+            }
+        }
+    }
+
+    function appendVideosToHome(items) {
+        const html = items.map(video => `
+            <div class="video-card" data-id="${video.id}">
+                <div class="thumbnail"><img src="${video.snippet.thumbnails.medium.url}" loading="lazy" onerror="this.src='https://via.placeholder.com/320x180?text=No+image'" /></div>
+                <div class="video-details">
+                    <div class="channel-avatar" data-channel-id="${video.snippet.channelId}">
+                        <img src="${video.snippet.thumbnails.default?.url || ''}" onerror="this.src='https://via.placeholder.com/36'" />
+                    </div>
+                    <div class="video-info">
+                        <div class="video-title">${escapeHtml(video.snippet.title)}</div>
+                        <div class="channel-name" data-channel-id="${video.snippet.channelId}">${escapeHtml(video.snippet.channelTitle)}</div>
+                        <div class="video-meta">${formatViewCount(video.statistics?.viewCount)} • ${new Date(video.snippet.publishedAt).toLocaleDateString()}</div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+        homeContainer.insertAdjacentHTML('beforeend', html);
+        attachVideoCardEvents();
+    }
+
+    function attachVideoCardEvents() {
+        document.querySelectorAll('.video-card').forEach(card => {
+            if (card.dataset.listener) return;
+            card.dataset.listener = 'true';
+            card.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = card.dataset.id;
+                const video = videosList.find(v => v.id === id);
+                if (video) openWatchView(video);
+            });
+        });
+        document.querySelectorAll('.channel-avatar, .channel-name').forEach(el => {
+            if (el.dataset.listener) return;
+            el.dataset.listener = 'true';
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const channelId = el.dataset.channelId;
+                if (channelId) openChannelView(channelId);
+            });
+        });
+    }
+
+    function setupInfiniteScroll() {
+        const mainContent = document.getElementById('mainContent');
+        const handler = () => {
+            if (mainContent.scrollTop + mainContent.clientHeight >= mainContent.scrollHeight - 200) {
+                if (!isLoading && hasMore) loadMoreVideos();
+            }
+        };
+        mainContent.addEventListener('scroll', handler);
+    }
+
+    async function loadMoreVideos() {
+        if (isLoading || !hasMore) return;
+        isLoading = true;
+        loadingIndicator.style.display = 'block';
+        try {
+            let result;
+            if (searchQuery.trim()) {
+                const sort = filterSelect.value;
+                result = await searchVideos(searchQuery, sort, nextPageToken);
+            } else {
+                result = await getTrending('US', nextPageToken);
+            }
+            if (!result.items || result.items.length === 0) { hasMore = false; return; }
+            videosList = [...videosList, ...result.items];
+            nextPageToken = result.nextPageToken;
+            hasMore = !!nextPageToken;
+            appendVideosToHome(result.items);
+        } catch (err) {
+            showToast('Ошибка загрузки ещё видео: ' + err.message, true);
+        } finally {
+            isLoading = false;
+            loadingIndicator.style.display = 'none';
+        }
+    }
+
+    // ================================================================
+    // 9. ПРОСМОТР ВИДЕО (С НОВЫМ ПЛЕЕРОМ)
+    // ================================================================
+    async function openWatchView(video) {
+        if (!history.includes(video.id)) {
+            history.unshift(video.id);
+            if (history.length > 200) history.pop();
+            saveHistory();
+        }
+        try {
+            const full = await getVideoInfo(video.id);
+            Object.assign(video, full);
+        } catch (err) {
+            console.warn('Не удалось загрузить детали', err);
+        }
+        currentVideoData = video;
+        currentView = 'watch';
+        currentVideoId = video.id;
+        homeContainer.style.display = 'none';
+        watchContainer.style.display = 'block';
+        channelContainer.style.display = 'none';
+        playlistContainer.style.display = 'none';
+        historyContainer.style.display = 'none';
+        renderWatch(video);
+        history.pushState({ view: 'watch', id: video.id }, '', `?v=${video.id}`);
+        fetchSuggestions(video.snippet.title);
+    }
+
+    async function fetchSuggestions(title) {
+        try {
+            const result = await searchVideos(title, 'relevance');
+            const suggestions = result.items.filter(v => v.id !== currentVideoId).slice(0, 10);
+            const container = document.getElementById('suggestionsList');
+            if (container) {
+                container.innerHTML = suggestions.map(sug => `
+                    <div class="suggestion-item" data-sug-id="${sug.id}">
+                        <div class="suggestion-thumb"><img src="${sug.snippet.thumbnails.medium.url}" onerror="this.src='https://via.placeholder.com/168x94'" /></div>
+                        <div class="suggestion-info">
+                            <div class="suggestion-title">${escapeHtml(sug.snippet.title)}</div>
+                            <div style="font-size:12px; color:var(--text-secondary)">${escapeHtml(sug.snippet.channelTitle)}</div>
+                            <div style="font-size:12px; color:var(--text-secondary)">${formatViewCount(sug.statistics?.viewCount)}</div>
+                        </div>
+                    </div>
+                `).join('');
+                container.querySelectorAll('.suggestion-item').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const id = el.dataset.sugId;
+                        const video = videosList.find(v => v.id === id) || suggestions.find(v => v.id === id);
+                        if (video) openWatchView(video);
+                    });
+                });
+            }
+        } catch (e) { console.warn('Рекомендации не загружены', e); }
+    }
+
+    function renderWatch(video) {
+        const isSubscribed = subscriptions.has(video.snippet.channelId);
+        const likeStatus = likes[video.id];
+        const likeCount = parseInt(video.statistics?.likeCount) || 0;
+        const likeDisplay = likeStatus === 'like' ? likeCount + 1 : (likeStatus === 'dislike' ? Math.max(0, likeCount - 1) : likeCount);
+        const watchHTML = `
+            <div class="watch-container">
+                <div class="watch-grid">
+                    <div class="watch-main">
+                        <div class="video-player-container" id="playerContainer">
+                            <video id="html5video" playsinline></video>
+                            <div class="video-controls" id="videoControls">
+                                <button id="playPauseBtn"><i class="fas fa-play"></i></button>
+                                <input type="range" id="progressBar" value="0" step="0.01" />
+                                <span class="time" id="timeDisplay">0:00 / 0:00</span>
+                                <input type="range" id="volumeBar" min="0" max="1" step="0.01" value="0.8" />
+                                <select class="quality-select" id="qualitySelect"></select>
+                            </div>
+                        </div>
+                        <div class="watch-title">${escapeHtml(video.snippet.title)}</div>
+                        <div class="watch-actions">
+                            <div class="channel-info">
+                                <div class="channel-avatar" data-channel-id="${video.snippet.channelId}">
+                                    <img src="${video.snippet.thumbnails.default?.url || ''}" width="36" height="36" style="border-radius:50%" onerror="this.src='https://via.placeholder.com/36'" />
+                                </div>
+                                <div>
+                                    <strong class="channel-name" data-channel-id="${video.snippet.channelId}">${escapeHtml(video.snippet.channelTitle)}</strong>
+                                    <div style="font-size:12px; color:var(--text-secondary)">YouTube канал</div>
+                                </div>
+                                <button class="subscribe-btn ${isSubscribed ? 'subscribed' : ''}" id="subscribeBtnAction">${isSubscribed ? '✅ Подписан' : 'Подписаться'}</button>
+                            </div>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <div class="like-dislike">
+                                    <button class="like-btn ${likeStatus === 'like' ? 'active' : ''}" id="likeBtn"><i class="fas fa-thumbs-up"></i> ${formatNumber(likeDisplay)}</button>
+                                    <button class="dislike-btn ${likeStatus === 'dislike' ? 'active' : ''}" id="dislikeBtn"><i class="fas fa-thumbs-down"></i> Не нравится</button>
+                                </div>
+                                <button class="share-btn" id="shareBtn"><i class="fas fa-share"></i> Поделиться</button>
+                                <button class="save-btn" id="saveToPlaylistBtn"><i class="fas fa-plus"></i> В плейлист</button>
+                                <button class="save-btn" id="watchLaterBtn"><i class="fas fa-clock"></i> Позже</button>
+                            </div>
+                        </div>
+                        <div class="watch-description">
+                            ${escapeHtml(video.snippet.description || 'Описание отсутствует')}
+                        </div>
+                        <div style="display:flex; gap:16px; font-size:14px; color:var(--text-secondary);">
+                            <span><i class="fas fa-eye"></i> ${formatViewCount(video.statistics?.viewCount)}</span>
+                            <span><i class="fas fa-thumbs-up"></i> ${formatNumber(video.statistics?.likeCount)}</span>
+                            <span><i class="fas fa-thumbs-down"></i> ${formatNumber(video.statistics?.dislikeCount || 0)}</span>
+                            <span><i class="fas fa-calendar"></i> ${new Date(video.snippet.publishedAt).toLocaleDateString()}</span>
+                        </div>
+                        <div class="comment-section">
+                            <div style="font-weight:500; margin-bottom:12px;">Комментарии</div>
+                            <div class="comment-input">
+                                <div class="comment-avatar"><img src="https://via.placeholder.com/36" /></div>
+                                <input type="text" id="commentInput" placeholder="Написать комментарий..." />
+                                <button id="postCommentBtn">Отправить</button>
+                            </div>
+                            <div id="commentsList"></div>
+                        </div>
+                    </div>
+                    <div class="watch-sidebar">
+                        <div style="font-weight:500; margin-bottom:12px;">Рекомендации</div>
+                        <div id="suggestionsList"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        watchContainer.innerHTML = watchHTML;
+
+        // Инициализация плеера
+        const videoElement = document.getElementById('html5video');
+        const playPause = document.getElementById('playPauseBtn');
+        const progress = document.getElementById('progressBar');
+        const timeDisplay = document.getElementById('timeDisplay');
+        const volumeBar = document.getElementById('volumeBar');
+
+        playVideoWithInvidious(video.id, videoElement).then(success => {
+            if (!success) {
+                showToast('Не удалось загрузить видео, попробуйте позже', true);
+            }
+        });
+
+        videoElement.addEventListener('loadedmetadata', () => {
+            progress.max = videoElement.duration;
+            timeDisplay.textContent = `0:00 / ${formatTime(videoElement.duration)}`;
+        });
+        videoElement.addEventListener('timeupdate', () => {
+            progress.value = videoElement.currentTime;
+            timeDisplay.textContent = `${formatTime(videoElement.currentTime)} / ${formatTime(videoElement.duration)}`;
+        });
+        playPause.addEventListener('click', () => {
+            if (videoElement.paused) {
+                videoElement.play();
+                playPause.innerHTML = '<i class="fas fa-pause"></i>';
+            } else {
+                videoElement.pause();
+                playPause.innerHTML = '<i class="fas fa-play"></i>';
+            }
+        });
+        progress.addEventListener('input', () => {
+            videoElement.currentTime = progress.value;
+        });
+        volumeBar.addEventListener('input', () => {
+            videoElement.volume = volumeBar.value;
+        });
+
+        // Подписка
+        const subBtn = document.getElementById('subscribeBtnAction');
+        if (subBtn) {
+            subBtn.addEventListener('click', () => {
+                const chId = video.snippet.channelId;
+                if (subscriptions.has(chId)) {
+                    subscriptions.delete(chId);
+                    subBtn.classList.remove('subscribed');
+                    subBtn.textContent = 'Подписаться';
+                    showToast(`Отписка от ${video.snippet.channelTitle}`);
+                } else {
+                    subscriptions.add(chId);
+                    subBtn.classList.add('subscribed');
+                    subBtn.textContent = '✅ Подписан';
+                    showToast(`Подписка на ${video.snippet.channelTitle}`);
+                }
+                saveSubscriptions();
+            });
+        }
+
+        // Лайки
+        const likeBtn = document.getElementById('likeBtn');
+        const dislikeBtn = document.getElementById('dislikeBtn');
+        function updateLikeUI() {
+            const status = likes[video.id];
+            let display = parseInt(video.statistics?.likeCount) || 0;
+            if (status === 'like') display += 1;
+            else if (status === 'dislike') display = Math.max(0, display - 1);
+            likeBtn.innerHTML = `<i class="fas fa-thumbs-up"></i> ${formatNumber(display)}`;
+            likeBtn.classList.toggle('active', status === 'like');
+            dislikeBtn.classList.toggle('active', status === 'dislike');
+        }
+        if (likeBtn && dislikeBtn) {
+            likeBtn.onclick = () => {
+                const current = likes[video.id];
+                if (current === 'like') delete likes[video.id];
+                else likes[video.id] = 'like';
+                saveLikes();
+                updateLikeUI();
+                showToast(current === 'like' ? 'Лайк убран' : '👍 Лайк поставлен');
+            };
+            dislikeBtn.onclick = () => {
+                const current = likes[video.id];
+                if (current === 'dislike') delete likes[video.id];
+                else likes[video.id] = 'dislike';
+                saveLikes();
+                updateLikeUI();
+                showToast(current === 'dislike' ? 'Дизлайк убран' : '👎 Дизлайк поставлен');
+            };
+            updateLikeUI();
+        }
+
+        // Поделиться
+        document.getElementById('shareBtn')?.addEventListener('click', () => {
+            const url = `https://www.youtube.com/watch?v=${video.id}`;
+            navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована'))
+                .catch(() => showToast('Не удалось скопировать', true));
+        });
+
+        // В плейлист
+        document.getElementById('saveToPlaylistBtn')?.addEventListener('click', () => {
+            const name = prompt('Введите название плейлиста:', 'Мой плейлист');
+            if (!name) return;
+            if (!playlists[name]) playlists[name] = [];
+            if (playlists[name].includes(video.id)) {
+                showToast('Уже в этом плейлисте');
+                return;
+            }
+            playlists[name].push(video.id);
+            savePlaylists();
+            showToast(`Добавлено в "${name}"`);
+        });
+
+        // Посмотреть позже
+        document.getElementById('watchLaterBtn')?.addEventListener('click', () => {
+            if (watchLater.includes(video.id)) {
+                watchLater = watchLater.filter(id => id !== video.id);
+                showToast('Удалено из "Позже"');
+            } else {
+                watchLater.push(video.id);
+                showToast('Добавлено в "Позже"');
+            }
+            saveWatchLater();
+        });
+
+        // Комментарии
+        function renderComments() {
+            const list = document.getElementById('commentsList');
+            const videoComments = comments[video.id] || [];
+            list.innerHTML = videoComments.map(c => `
+                <div class="comment">
+                    <div class="comment-avatar"><img src="https://via.placeholder.com/36" /></div>
+                    <div class="comment-text"><strong>${escapeHtml(c.author)}</strong><br>${escapeHtml(c.text)}</div>
+                </div>
+            `).join('');
+            if (videoComments.length === 0) list.innerHTML = '<div style="padding:16px; text-align:center;">Нет комментариев. Будьте первым!</div>';
+        }
+        const postBtn = document.getElementById('postCommentBtn');
+        const commentInput = document.getElementById('commentInput');
+        if (postBtn && commentInput) {
+            postBtn.onclick = () => {
+                const text = commentInput.value.trim();
+                if (!text) return;
+                if (!comments[video.id]) comments[video.id] = [];
+                comments[video.id].unshift({ author: 'Вы', text });
+                saveComments();
+                renderComments();
+                commentInput.value = '';
+                showToast('Комментарий добавлен');
+            };
+        }
+        renderComments();
+
+        // Переход по каналу
+        document.querySelectorAll('.channel-avatar, .channel-name').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const chId = el.dataset.channelId;
+                if (chId) openChannelView(chId);
+            });
+        });
+    }
+
+    // ================================================================
+    // 10. СТРАНИЦА КАНАЛА
+    // ================================================================
+    async function openChannelView(channelId) {
+        currentView = 'channel';
+        currentChannelId = channelId;
+        homeContainer.style.display = 'none';
+        watchContainer.style.display = 'none';
+        channelContainer.style.display = 'block';
+        playlistContainer.style.display = 'none';
+        historyContainer.style.display = 'none';
+        channelContainer.innerHTML = '<div class="loader">Загрузка канала...</div>';
+        try {
+            const [channelInfo, videosResult] = await Promise.all([
+                getChannelInfo(channelId),
+                getChannelVideos(channelId)
+            ]);
+            const videos = videosResult.items;
+            if (!videos.length) throw new Error('Нет видео на канале');
+            const isSubscribed = subscriptions.has(channelId);
+            channelContainer.innerHTML = `
+                <div class="channel-header">
+                    <div class="channel-banner"><img src="${channelInfo.snippet.thumbnails.high?.url || channelInfo.snippet.thumbnails.default.url}" onerror="this.src='https://via.placeholder.com/80'" /></div>
+                    <div>
+                        <h2>${escapeHtml(channelInfo.snippet.title)}</h2>
+                        <div style="color:var(--text-secondary)">${formatNumber(channelInfo.statistics.subscriberCount)} подписчиков • ${formatNumber(channelInfo.statistics.videoCount)} видео</div>
+                        <button class="subscribe-btn ${isSubscribed ? 'subscribed' : ''}" id="channelSubscribeBtn">${isSubscribed ? '✅ Подписан' : 'Подписаться'}</button>
+                    </div>
+                </div>
+                <div class="video-grid" id="channelVideosGrid"></div>
+            `;
+            const grid = document.getElementById('channelVideosGrid');
+            grid.innerHTML = videos.map(v => `
+                <div class="video-card" data-id="${v.id}">
+                    <div class="thumbnail"><img src="${v.snippet.thumbnails.medium.url}" onerror="this.src='https://via.placeholder.com/320x180'" /></div>
+                    <div class="video-details">
+                        <div class="channel-avatar"><img src="${channelInfo.snippet.thumbnails.default.url}" onerror="this.src='https://via.placeholder.com/36'" /></div>
+                        <div class="video-info">
+                            <div class="video-title">${escapeHtml(v.snippet.title)}</div>
+                            <div class="channel-name">${escapeHtml(v.snippet.channelTitle)}</div>
+                            <div class="video-meta">${formatViewCount(v.statistics?.viewCount)} • ${new Date(v.snippet.publishedAt).toLocaleDateString()}</div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            grid.querySelectorAll('.video-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    const id = card.dataset.id;
+                    const video = videos.find(v => v.id === id);
+                    if (video) openWatchView(video);
+                });
+            });
+            const subBtn = document.getElementById('channelSubscribeBtn');
+            if (subBtn) {
+                subBtn.addEventListener('click', () => {
+                    if (subscriptions.has(channelId)) {
+                        subscriptions.delete(channelId);
+                        subBtn.classList.remove('subscribed');
+                        subBtn.textContent = 'Подписаться';
+                        showToast(`Отписка от ${channelInfo.snippet.title}`);
+                    } else {
+                        subscriptions.add(channelId);
+                        subBtn.classList.add('subscribed');
+                        subBtn.textContent = '✅ Подписан';
+                        showToast(`Подписка на ${channelInfo.snippet.title}`);
+                    }
+                    saveSubscriptions();
+                });
+            }
+        } catch (err) {
+            channelContainer.innerHTML = `<div class="loader">Ошибка: ${err.message}</div>`;
+            showToast(err.message, true);
+        }
+    }
+
+    // ================================================================
+    // 11. ПЛЕЙЛИСТЫ, ИСТОРИЯ, "ПОЗЖЕ"
+    // ================================================================
+    function renderPlaylists() {
+        playlistContainer.style.display = 'block';
+        homeContainer.style.display = 'none';
+        watchContainer.style.display = 'none';
+        channelContainer.style.display = 'none';
+        historyContainer.style.display = 'none';
+        let html = `
+            <div class="playlist-manager">
+                <h3>Мои плейлисты</h3>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+                    <input type="text" id="newPlaylistName" placeholder="Название плейлиста" />
+                    <button id="createPlaylistBtn">Создать</button>
+                </div>
+            </div>
+            <div id="playlistsList"></div>
+        `;
+        playlistContainer.innerHTML = html;
+        const list = document.getElementById('playlistsList');
+        const names = Object.keys(playlists);
+        if (names.length === 0) {
+            list.innerHTML = '<p style="color:var(--text-secondary);">У вас пока нет плейлистов.</p>';
+        } else {
+            list.innerHTML = names.map(name => `
+                <div class="playlist-item">
+                    <div class="playlist-header">
+                        <strong>${escapeHtml(name)} (${playlists[name].length} видео)</strong>
+                        <button class="danger delete-playlist" data-name="${name}">Удалить плейлист</button>
+                    </div>
+                    ${playlists[name].map(id => `
+                        <div class="video-entry">
+                            <span>${escapeHtml(id)}</span>
+                            <button class="danger remove-from-playlist" data-name="${name}" data-id="${id}">✕</button>
+                        </div>
+                    `).join('')}
+                </div>
+            `).join('');
+            list.querySelectorAll('.delete-playlist').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const name = btn.dataset.name;
+                    if (confirm(`Удалить плейлист "${name}"?`)) {
+                        delete playlists[name];
+                        savePlaylists();
+                        renderPlaylists();
+                        showToast(`Плейлист "${name}" удалён`);
+                    }
+                });
+            });
+            list.querySelectorAll('.remove-from-playlist').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const name = btn.dataset.name;
+                    const id = btn.dataset.id;
+                    playlists[name] = playlists[name].filter(v => v !== id);
+                    if (playlists[name].length === 0) delete playlists[name];
+                    savePlaylists();
+                    renderPlaylists();
+                    showToast('Видео удалено из плейлиста');
+                });
+            });
+        }
+        document.getElementById('createPlaylistBtn')?.addEventListener('click', () => {
+            const input = document.getElementById('newPlaylistName');
+            const name = input.value.trim();
+            if (!name) return showToast('Введите название', true);
+            if (playlists[name]) return showToast('Плейлист уже существует', true);
+            playlists[name] = [];
+            savePlaylists();
+            renderPlaylists();
+            input.value = '';
+            showToast(`Плейлист "${name}" создан`);
+        });
+    }
+
+    function renderHistory() {
+        historyContainer.style.display = 'block';
+        homeContainer.style.display = 'none';
+        watchContainer.style.display = 'none';
+        channelContainer.style.display = 'none';
+        playlistContainer.style.display = 'none';
+        if (history.length === 0) {
+            historyContainer.innerHTML = '<div class="loader">История пуста</div>';
+            return;
+        }
+        let html = `<h3>История просмотров (${history.length})</h3><div class="video-grid">`;
+        history.slice(0, 50).forEach(id => {
+            let video = videosList.find(v => v.id === id);
+            if (!video) video = { id, snippet: { title: 'Видео ' + id, channelTitle: 'Неизвестный', thumbnails: { medium: { url: 'https://via.placeholder.com/320x180' } } }, statistics: { viewCount: 0 } };
+            html += `
+                <div class="video-card" data-id="${id}">
+                    <div class="thumbnail"><img src="${video.snippet.thumbnails.medium.url}" onerror="this.src='https://via.placeholder.com/320x180'" /></div>
+                    <div class="video-details">
+                        <div class="video-info">
+                            <div class="video-title">${escapeHtml(video.snippet.title)}</div>
+                            <div class="channel-name">${escapeHtml(video.snippet.channelTitle)}</div>
+                            <div class="video-meta">${formatViewCount(video.statistics?.viewCount)}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        historyContainer.innerHTML = html;
+        historyContainer.querySelectorAll('.video-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const id = card.dataset.id;
+                let video = videosList.find(v => v.id === id);
+                if (!video) video = { id, snippet: { title: 'Видео ' + id, channelTitle: 'Неизвестный', thumbnails: { medium: { url: 'https://via.placeholder.com/320x180' } } }, statistics: { viewCount: 0 } };
+                openWatchView(video);
+            });
+        });
+    }
+
+    function renderWatchLater() {
+        playlistContainer.style.display = 'block';
+        homeContainer.style.display = 'none';
+        watchContainer.style.display = 'none';
+        channelContainer.style.display = 'none';
+        historyContainer.style.display = 'none';
+        if (watchLater.length === 0) {
+            playlistContainer.innerHTML = '<div class="loader">Список "Позже" пуст</div>';
+            return;
+        }
+        let html = `<h3>Посмотреть позже (${watchLater.length})</h3><div class="video-grid">`;
+        watchLater.forEach(id => {
+            let video = videosList.find(v => v.id === id);
+            if (!video) video = { id, snippet: { title: 'Видео ' + id, channelTitle: 'Неизвестный', thumbnails: { medium: { url: 'https://via.placeholder.com/320x180' } } }, statistics: { viewCount: 0 } };
+            html += `
+                <div class="video-card" data-id="${id}">
+                    <div class="thumbnail"><img src="${video.snippet.thumbnails.medium.url}" onerror="this.src='https://via.placeholder.com/320x180'" /></div>
+                    <div class="video-details">
+                        <div class="video-info">
+                            <div class="video-title">${escapeHtml(video.snippet.title)}</div>
+                            <div class="channel-name">${escapeHtml(video.snippet.channelTitle)}</div>
+                            <div class="video-meta">${formatViewCount(video.statistics?.viewCount)}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        playlistContainer.innerHTML = html;
+        playlistContainer.querySelectorAll('.video-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const id = card.dataset.id;
+                let video = videosList.find(v => v.id === id);
+                if (!video) video = { id, snippet: { title: 'Видео ' + id, channelTitle: 'Неизвестный', thumbnails: { medium: { url: 'https://via.placeholder.com/320x180' } } }, statistics: { viewCount: 0 } };
+                openWatchView(video);
+            });
+        });
+    }
+
+    // ================================================================
+    // 12. БОКОВОЕ МЕНЮ И НАВИГАЦИЯ
+    // ================================================================
+    function updateSidebarSubscriptions() {
+        const list = document.getElementById('subscriptionsList');
+        if (!list) return;
+        const subs = Array.from(subscriptions).slice(0, 10);
+        list.innerHTML = subs.map(chId => `
+            <div class="sidebar-item" data-channel-id="${chId}">
+                <i class="fas fa-user-circle"></i> <span>Канал ${chId.slice(0,8)}...</span>
+            </div>
+        `).join('');
+        if (subs.length === 0) list.innerHTML = '<div class="sidebar-item" style="color:var(--text-secondary);">Нет подписок</div>';
+        list.querySelectorAll('.sidebar-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const chId = el.dataset.channelId;
+                if (chId) openChannelView(chId);
+            });
+        });
+    }
+
+    function goHome() {
+        currentView = 'home';
+        searchQuery = '';
+        searchInput.value = '';
+        homeContainer.style.display = 'grid';
+        watchContainer.style.display = 'none';
+        channelContainer.style.display = 'none';
+        playlistContainer.style.display = 'none';
+        historyContainer.style.display = 'none';
+        renderHome(true);
+        document.querySelectorAll('.sidebar-item').forEach(item => item.classList.remove('active'));
+        document.querySelector('.sidebar-item[data-nav="home"]')?.classList.add('active');
+        history.pushState({ view: 'home' }, '', '/');
+        if (loadTimeout) clearTimeout(loadTimeout);
+    }
+
+    function performSearch() {
+        const query = searchInput.value.trim();
+        if (!query) return;
+        searchQuery = query;
+        if (currentView !== 'home') goHome();
+        else renderHome(true);
+        document.querySelectorAll('.sidebar-item').forEach(item => item.classList.remove('active'));
+        document.querySelector('.sidebar-item[data-nav="home"]')?.classList.add('active');
+    }
+
+    // ================================================================
+    // 13. ИНИЦИАЛИЗАЦИЯ
+    // ================================================================
+    function init() {
+        loadStorage();
+        updateSidebarSubscriptions();
+        renderHome();
+        setupInfiniteScroll();
+
+        document.querySelectorAll('.sidebar-item[data-nav]').forEach(item => {
+            item.addEventListener('click', () => {
+                const nav = item.dataset.nav;
+                if (nav === 'home') goHome();
+                else if (nav === 'subscriptions') {
+                    goHome();
+                    showToast('Видео из подписок (в разработке)');
+                } else if (nav === 'library') {
+                    showToast('Библиотека (в разработке)');
+                } else if (nav === 'history') {
+                    renderHistory();
+                } else if (nav === 'playlists') {
+                    renderPlaylists();
+                } else if (nav === 'watchlater') {
+                    renderWatchLater();
+                } else {
+                    showToast(`Раздел "${item.innerText.trim()}" временно недоступен`);
+                }
+                document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+                item.classList.add('active');
+            });
+        });
+
+        document.getElementById('clearHistoryBtn')?.addEventListener('click', () => {
+            if (confirm('Очистить историю просмотров?')) {
+                history = [];
+                saveHistory();
+                showToast('История очищена');
+                if (currentView === 'history') renderHistory();
+            }
+        });
+
+        searchBtn.addEventListener('click', performSearch);
+        searchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') performSearch(); });
+        filterSelect.addEventListener('change', () => { if (searchQuery) performSearch(); });
+        logoBtn.addEventListener('click', goHome);
+        themeToggle.addEventListener('click', () => {
+            const isDark = document.body.classList.toggle('dark');
+            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+            saveTheme(isDark);
+        });
+        if (document.body.classList.contains('dark')) {
+            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        }
+
+        document.getElementById('menuMockBtn')?.addEventListener('click', () => showToast('Меню'));
+        document.getElementById('createMockBtn')?.addEventListener('click', () => showToast('Создать видео'));
+        document.getElementById('notifyMockBtn')?.addEventListener('click', () => showToast('Уведомления'));
+        document.getElementById('avatarMock')?.addEventListener('click', () => showToast('Аккаунт'));
+
+        window.addEventListener('popstate', (event) => {
+            if (event.state && event.state.view === 'watch' && event.state.id) {
+                const video = videosList.find(v => v.id === event.state.id);
+                if (video) openWatchView(video);
+            } else {
+                goHome();
+            }
+        });
+    }
+
+    init();
+</script>
+</body>
+</html>            overflow-x: hidden;
             transition: background var(--transition), color var(--transition);
         }
         .header {
